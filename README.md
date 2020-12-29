@@ -1,2 +1,5 @@
 # projects
-Project contains basic analytics models: principal components, linear regression, logistic regression, penalized regression, among others
+This repository contains two projects: (1) regression project, (2) classification project. 
+
+## regression project
+
