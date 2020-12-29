@@ -1,0 +1,223 @@
+---
+title: "Regression project"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+In this project we will implement several models to predict the crime rate in a new city in the US, while assessing a possible overfitting problem. The dataset used is the crime data from http://www.statsci.org/data/general/uscrime.txt. 
+
+We will implement the following models: 
+(a) Multiple linear regression
+(b) Multiple linear regression with principal components 
+
+## EXPLORATORY DATA ANALYSIS ##
+
+First, we load the data and libraries. 
+
+```{r}
+#We load the libraries
+library(tidyverse)
+library(GGally)
+library(corrplot)
+library(outliers)
+library(lmtest)
+library(caret)
+library(factoextra)
+
+#Digit configuration in R
+options(digits = 7,
+        scipen = 999)
+
+#We load the data
+rm(list=ls())
+
+data = read.table("uscrime.txt",header = T)
+
+```
+
+After loading the data, we might want to use implement descriptive statistics. 
+
+```{r}
+#Descriptive analysis
+summary(data)
+
+#Correlation plot 
+corrplot(cor(data))
+
+#Descriptive plots
+ggpairs(data)
+
+```
+From the above results we can observe some things. First, the range of Crime is between 342 and 1993. In terms of the relation of Crime with other predictors, we observe that the most significant correlations of the response variable are Po1 and Po2 (per capita expenditure on police in 1959 and 1960). 
+
+In total, the variable Crime has a significant correlation (with a 95% confidence) with the following variables: Ed, Po1, Po2, Pop, Wealth and Prob. It is possible that such correlation is probably inflated by multicollinearity.
+
+The multicollinearity is a problem that arises when there are high intercorrelations among the predictors in a model. Multicollinearity can lead to bias in the estimation of the results and the increase of standard errors. In order to assess the possibility of multicollinearity, we try to identify pairs of variables with the highest significant correlations. Later, for a linear regression model including all variables, we will assess the multicollinearity via variance inflation (VIF). 
+
+Here, we can observe that Wealth appears to be highly correlated with Ed, P1, P2 and Inequality. Also, there appear to be a high correlation among P1 and P2, which are basically the same variable since the correlation coefficient is very close to 1.
+
+An important aspect, is that the variables are not scaled. In other words, the range of every value is different, and they are not centered around zero. For the purpose of this problem, we will ignore this fact, but this could be relevant depending on how the linear regression is fitted (e.g. which optimization algorithm is being implemented).
+
+On the other hand, there are no missing values. In terms of outliers, we use a statistical test to look for outliers. We can conclude with a 95% confidence that neither could be considered outliers. On the other hand, there are no missing values.
+
+```{r}
+#Missing values
+data %>% 
+  sapply(FUN = function(x) sum(is.na(x)))
+
+#Outliers tests
+grubbs.test(data$Crime)
+grubbs.test(data$Crime,opposite = T)
+```
+
+## MULTIPLE LINEAR REGRESSION ##
+
+Prior to modeling, we proceed to create a data partition in order to assess the model quality in a different dataset than the one used for training the model. We will implement a 90%-10% proportion for train and test data. 
+
+```{r}
+#Set seed
+set.seed(123)
+
+#Data partition
+id = createDataPartition(data$Crime, p = 0.9, list = F)
+train = data[id, ]
+test = data[-id, ]
+
+```
+
+We estimate the first model, that is: Crime as a function of every other variable, even when their correlation is not significant. To implement this, we use a leave-one-out-cross-validation approach with caret package. 
+
+```{r}
+#Implement a cross-validation
+train_control = trainControl(method="LOOCV")
+
+#We estimate the model
+model = train(Crime~.,
+               data = train,
+               method  = "lm",
+               trControl = train_control)
+
+#Cross-validated R2
+model$results$Rsquared
+
+#Coefficients of the full model
+summary(model$finalModel)
+
+
+```
+From that model we can observe that, with a 95% confidence, Ed and Ineq are significant to explain Crime. 
+
+In terms of the quality of the model we can observe the following. 
+
+The proportion of the variance that is explained by the model, adjusted by the number of parameters estimated (adjusted R-squared) is 0.6807. However, when we observe the cross-validated R2, that number drops to 0.4608877.  This indicates over-fitting in the dataset. 
+
+Of course, since we only have 43 observations and 16 variables it is very likely that we are experiencing some form of overfitting. To solve this potential problem, we will implement a multiple regression model with principal components (PCA).
+
+## PRINCIPAL COMPONENTS ANALYSIS ##
+
+Given those results, we proceed to estimate the principal components with the scaled data. 
+
+```{r}
+#We define a numerical matrix excluding the response
+num = train %>% select(-Crime)
+
+#We implement the PCA model
+model.pca = prcomp(num, center=TRUE, scale.=TRUE)
+summary(model.pca)
+
+#We obtain the eigenvector matrix
+model.pca$rotation
+
+#Scree plot
+fviz_eig(model.pca)
+
+#Variables PCA plot
+fviz_pca_var(model.pca,col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+```
+
+Here, we can observe that the first two components explain 61.40% of the variance. If we count for the first four components, the 81.42% of the variance is captured. From the screeplot, there seems to be an inflection point (elbow) on four components.
+
+In terms of the radial plot for the first two components, we can observe several things: 
+(a) The variables with the biggest contribution for the two components are wealth, inequality, Ed, po1, po2. 
+
+(b) There appear to be a high positive correlation between po1 and po2 and a high negative correlation between wealth and inequality. 
+
+(c) The less important variables in terms of their contribution to the variance explained by this two components appear to be U1, U2. Other variables that appear less important are M.F, LF, Time, M and Prob. 
+
+(d) In general, there is not a combination of two variables that are orthogonal to each other (that show zero correlation).
+
+When we observe the factor loadings, we see that the most important variables in PC are: wealth and inequality. For the second component, the maximum value of the linear combination is Pop followed by M.F, and so on. 
+
+The question is how many components to select in order to implement the linear regression. In this case, we will select four components, but will compare the results with a cross-validation principal component regression. 
+
+Later, we will estimate a linear regression model using principal components. We will determine the number of components based on the R2. From that example, we show that four components increase the cross-validated R2 to 0.5765.
+
+```{r}
+#Create a sequence for R2
+r2 <- numeric(15) 
+
+#Extract the crime variable
+crime = as.data.frame(train$Crime)
+names(crime) = "crime"
+
+#Extract the validation R2 for regression with different number of components
+for (i in 1:15) {
+  pcs = as.data.frame(model.pca$x[,1:i])
+  data.pca = cbind(crime,pcs)
+  model = train(crime~.,data=data.pca,method="lm",trControl=train_control )
+  r2[i] = model$result$Rsquared # calculate R-squared
+}
+
+#Show the results
+components = seq(1,15)
+r2_df = cbind(components,r2) %>% as.data.frame()
+
+r2_df %>% filter(r2 == max(r2))
+
+#Plot the results
+ggplot(data=r2_df,aes(x=components,y=r2)) + geom_point()+ ggtitle("R2-CV for different number of components") +
+  xlab("N°Components") + ylab("Cross-validated R2")
+```
+
+Therefore, we estimate that the model with four components.
+
+```{r}
+#We extract the principal components data
+pcs = as.data.frame(model.pca$x)
+data.pca = cbind(crime,pcs)
+
+#Second model: LOOCV with only four components
+model.2 = train(crime~PC1+PC2+PC3+PC4,data=data.pca,method="lm",trControl=train_control)
+
+#Cross-validated R2
+model.2$results$Rsquared
+
+#Coefficients of the full model
+summary(model.2$finalModel)
+
+```
+
+Finally, since the components are just linear combinations of the original factors, we will generate some algebraic transformations to show the coefficients in terms of the original factors. 
+
+```{r}
+#Rotation (eigenvector) matrix
+V = as.matrix(model.pca$rotation)[,1:4]
+
+#Betas coefficients of the model with PCA except the intercept
+bk = as.matrix(model.2$finalModel$coefficients[2:5])
+
+#We obtain the betas without PCA
+beta.X =  V %*% bk
+
+#We unscale the data
+beta.X = beta.X/model.pca$scale 
+beta.X
+
+#Intercept unscaled
+b0k = as.matrix(model.2$finalModel$coefficients[1])
+
+beta0.X = b0k - sum(V %*% bk*model.pca$center /model.pca$scale)
+beta0.X
+```
