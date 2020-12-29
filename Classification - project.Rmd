@@ -1,0 +1,223 @@
+---
+title: "Project - Classification"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+The goal of the project is to apply three classification models in order to predict the response variable indicating if the application was positive or negative. The models we will apply are: 
+
+(a) Support vector machines with linear, polynomial and gaussian kernels
+(b) k-NN
+(c) Logistic regression
+
+First, we proceed to load the data and libraries:
+```{r}
+# General settings
+options(digits = 7,
+        scipen = 999)
+
+#Load libraries
+library(tidyverse)
+library(caret)
+library(GGally)
+library(kknn)
+library(kernlab)
+
+#Load data
+setwd("~/Github/Projects")
+data = read.table(file = "credit_card_data-headers.txt",header = T)
+
+```
+
+Prior to modelling, we will briefly describe the dataset.
+```{r}
+#Summary statistics
+summary(data)
+
+#Visualization of variables
+ggpairs(data)
+
+#Correlation matrices
+cor(data)[,11]
+```
+Prior to modeling, we will divide the data into train and test datasets, and we will select the best models based on repeated cross-validation methods. 
+
+```{r}
+#Set seed
+set.seed(123)
+
+#Data partition (80% train, 20% test)
+id = createDataPartition(y = data$R1,p=0.8,list=F)
+train = data[id,]
+test = data[-id,]
+
+```
+
+
+## SUPPORT VECTOR MACHINES ##
+
+First, we proceed to define a function that will be used in order to obtain the misclassification error rate of each model. The function takes the cost, which is associated with lambda, implements an SVM model and returns the error rate. 
+
+We first have to remember that the cost parameter weights the optimization term associated with bigger separators. In other words, as the cost parameter increases, we expect the model to weight more the  minimization of total classification errors at the expense of smaller margins. As the cost parameter increases, we should expect an increase in the train accuracy, and a decrease in test accuracy due to bias-variance trade-off. 
+
+Then, we want to try different values of the cost to understand how it affects the error rate. So we define a sequence of values from approximately 0 to 10,000,000, with steps every one million, to see how the error behaves. 
+
+```{r}
+#Function to get the error
+get_error = function(cost){
+  model = ksvm(x = as.matrix(train[,c(1:10)]),y = as.factor(train[,11]),type = "C-svc",kernel="vanilladot",C=cost,scaled=TRUE)
+  error = model@error
+  return(error)
+}
+
+#Sequence of costs
+cost_seq_1 = seq(1e-7,1e7,1000000)
+
+#Apply such sequence of costs to the function get_error()
+errors_1 = sapply(cost_seq_1,get_error)
+
+#We save the results to a dataframe and plot them
+errors_df = as.data.frame(cbind(cost_seq_1,errors_1))
+ggplot(data=errors_df,aes(x=cost_seq_1,y=errors_1))+geom_line()+ylab("Errors (1-Accuracy)")+xlab("Possible Costs (1,000,000)")
+
+
+```
+
+Therefore, we can conclude that the error rate seems to be very sensible depending on the costs. For example, very small costs generate very large error rate. The same behavior appears when we observe very large costs. On the other hand, we can observe that variations are small between [1-100]. Therefore, we could set costs at C = 100 to allow for more flexibility in the model, without sacrificing classification errors. 
+
+Finally, we will implement different support vector machines models varying kernels and the cost parameter. 
+
+```{r}
+#Set the train control
+train_control = trainControl(method="repeatedcv", number=10, repeats=3)
+
+#Set the grid to consider several costs
+grid = expand.grid(C = 100)
+
+#Fit the model with a linear kernel
+m1 = train(R1 %>% as.factor() ~., data = train, method = "svmLinear", trControl = train_control,  preProcess = c("center","scale"),tuneGrid=grid)
+
+#Show results
+m1
+
+```
+
+It is relevant to get the hyperplane of the SVM linear model. Using linear algebra, we can obtain the equation: 
+
+```{r}
+#Get the coefficients for the hyperplane
+bj_linear = colSums(m1$finalModel@xmatrix[[1]]*m1$finalModel@coef[[1]])
+b0_linear = -m1$finalModel@b
+
+#Show the equation
+bj_linear
+b0_linear
+```
+
+Then, we repeat the procedure but using non-linear kernels. We will implement SVM models with gaussian radial and polynomial kernels. 
+
+```{r}
+#Set the grid
+grid = expand.grid(C = 100,sigma = seq(0.001,0.01,length=5))
+
+#Fit the model with a radial kernel
+m2 = train(R1 %>% as.factor()~., data = train, method = "svmRadial", trControl = train_control,  preProcess = c("center","scale"),tuneGrid=grid)
+
+#Get the best parameters
+m2
+
+```
+
+Finally, we implement the SVM model with a polynomial kernel. 
+
+```{r}
+#Set the grid
+grid = expand.grid(C = 100,scale = seq(0.001,0.01,length=5),degree=seq(1,5))
+
+
+#Fit the model with a polynomial kernel
+m3 = train(R1 %>% as.factor()~., data = train, method = "svmPoly", trControl = train_control,  preProcess = c("center","scale"))
+
+#Get the best parameters
+m3
+
+```
+
+
+## K-Nearest Neighbors ##
+
+Using the same dataset, we will implement several classification models. In this case, we will implement a k-NN model. Again, we will implement a repeated cross-validation approach. We will consider the first 20-nearest neighbors.
+
+```{r}
+#Tune grid
+grid = expand.grid(k = seq(1,20))
+
+#Fit the k-nn model 
+m4 = train(as.factor(R1)~., data = train, method = "knn",trControl = train_control,preProcess = c("center","scale"),tuneGrid=grid)
+
+#Get the best parameters
+m4
+
+#Plot results
+plot(m4)
+```
+
+
+## Logistic regression ##
+
+We will train two logistic regression models: one with the complete set of factors, and one using Lasso penalization model. 
+
+```{r}
+#Fit the logistic regression model
+m5 = train(R1 %>% as.factor()~., data = train, method="glm",family="binomial", trControl =train_control)
+
+#Show the results in log-odds
+m5
+
+#Get the results in odds ratio
+exp(coef(m5$finalModel))
+
+```
+
+Next, we estimate a penalized logistic regression model. 
+
+```{r}
+#Tune grid
+grid = expand.grid(alpha = seq(0,1,by = 0.1),lambda = seq(0.00001,0.1,by=0.01))
+
+#Fit an elastic net model
+m6 = train(R1 %>% as.factor()~.,data = train, method = "glmnet", trControl = train_control,tuneGrid=grid)
+
+m6
+```
+
+## Compare results ##
+
+```{r}
+#Create a dataframe with the best models
+models = c("SVM linear","SVM radial","SVM polynomial","k-NN","Logistic regression","Elastic net logistic regression")
+accuracy_models = c(m1$results[["Accuracy"]] %>% max(),
+                    m2$results[["Accuracy"]] %>% max(),
+                    m3$results[["Accuracy"]] %>% max(),
+                    m4$results[["Accuracy"]] %>% max(),
+                    m5$results[["Accuracy"]] %>% max(),
+                    m6$results[["Accuracy"]] %>% max())
+
+df_accuracy = cbind(models,accuracy_models) %>% as.data.frame()
+#Show the data frame
+df_accuracy
+
+#Get the model with the highest cross-validation accuracy
+df_accuracy %>% filter(accuracy_models == max(accuracy_models))
+
+```
+Since the penalized logistic regression model presents the highest accuracy, we estimate the quality metrics based on the test dataset. Therefore, we can observe that although on the train dataset the accuracy was 0.87, in the test dataset it drops to 0.83.
+
+```{r}
+#Confusion matrix
+predicted_class = m6 %>% predict(test)
+confusionMatrix(data = as.factor(predicted_class), reference = as.factor(test$R1))
+
+```
+
