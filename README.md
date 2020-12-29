@@ -8,4 +8,4 @@ This project consists in applying a LOOCV multiple linear regression model as we
 
 ## Classification project
 
-This project consists in applying several analytics models: (a) Support vector machines (SVM), (b) k-Nearest Neighbors, (c) logistic regression, (d) penalized logistic regression (elastic nets) to the 
+This project consists in applying several analytics models: (a) Support vector machines (SVM), (b) k-Nearest Neighbors, (c) logistic regression, (d) penalized logistic regression (elastic nets) to the credit card dataset.
